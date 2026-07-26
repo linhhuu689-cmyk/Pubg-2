@@ -1,0 +1,59 @@
+name: Build PUBG Mod
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Theos
+      run: |
+        git clone --depth 1 https://github.com/theos/theos.git $HOME/theos
+        echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+    - name: Build
+      run: |
+        mkdir -p tweak
+        cat > tweak/Makefile << 'EOF'
+        TARGET := iphone:clang:latest:7.0
+        include $(THEOS)/makefiles/common.mk
+        TWEAK_NAME = pubgmod
+        pubgmod_FILES = Tweak.xm
+        pubgmod_CFLAGS = -fobjc-arc
+        include $(THEOS_MAKE_PATH)/tweak.mk
+        EOF
+        cat > tweak/Tweak.xm << 'EOF'
+        #import <substrate.h>
+        void (*orig_SetColor)(void *, SEL, float, float, float, float);
+        void hook_SetColor(void *self, SEL cmd, float r, float g, float b, float a) {
+            orig_SetColor(self, cmd, 1.0, 1.0, 1.0, 1.0);
+        }
+        void (*orig_SetSky)(void *, SEL, float, float, float, float);
+        void hook_SetSky(void *self, SEL cmd, float r, float g, float b, float a) {
+            orig_SetSky(self, cmd, 0.03, 0.03, 0.12, 1.0);
+        }
+        %ctor {
+            MSHookMessageEx(objc_getClass("UnityEngine.Material"), @selector(SetColor:), (IMP)&hook_SetColor, (IMP*)&orig_SetColor);
+            MSHookMessageEx(objc_getClass("UnityEngine.Camera"), @selector(set_backgroundColor:), (IMP)&hook_SetSky, (IMP*)&orig_SetSky);
+        }
+        EOF
+        cat > tweak/control << 'EOF'
+        Package: com.pubg.mod
+        Name: PUBG Mod
+        Version: 1.0
+        Architecture: iphoneos-arm64
+        Description: ESP Mod
+        Maintainer: pubg
+        Author: pubg
+        Section: Tweaks
+        EOF
+        cat > tweak/pubgmod.plist << 'EOF'
+        { Filter = { Bundles = ( "com.tencent.pubgm" ); }; }
+        EOF
+        cd tweak && make package
+        find . -name "*.dylib" -exec cp {} ../pubgmod.dylib \;
+    - uses: actions/upload-artifact@v4
+      with:
+        name: pubgmod-dylib
+        path: pubgmod.dylib
